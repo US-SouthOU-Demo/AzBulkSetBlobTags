@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AzBulkSetBlobTier
+namespace AzBulkSetBlobTags
 {
     public class DependencyFilter : ITelemetryProcessor
     {

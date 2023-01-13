@@ -9,5 +9,5 @@ RUN dotnet restore
 
 # copy and build everything else
 COPY . ./
-RUN dotnet publish ./AzBulkSetBlobTier/AzBulkSetBlobTier.csproj -c Release -o out
-ENTRYPOINT ["dotnet", "out/AzBulkSetBlobTier.dll"]
+RUN dotnet publish ./AzBulkSetBlobTags/AzBulkSetBlobTags.csproj -c Release -o out
+ENTRYPOINT ["dotnet", "out/AzBulkSetBlobTags.dll"]

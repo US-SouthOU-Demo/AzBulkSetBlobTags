@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net7.0</TargetFramework>
-    <UserSecretsId>dotnet-AzBulkSetBlobTier-0DA42B67-E27B-445F-854E-2EC9F95F7653</UserSecretsId>
+    <UserSecretsId>dotnet-AzBulkSetBlobTags-0DA42B67-E27B-445F-854E-2EC9F95F7653</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,18 +1,18 @@
 ---
 page_type: sample
-name: AzBulkSetBlobTier
+name: AzBulkSetBlobTags
 topic: sample
 description: |
-  AzBulkSetBlobTier is a sample application designed to help Azure Storage customers preform very large data moves from Archive to Hot or Cool Tier.
+  AzBulkSetBlobTags is a sample application designed to help Azure Storage customers preform very large data moves from Archive to Hot or Cool Tier.
 languages:
   - csharp
 products:
   - azure
   - azure-blob-storage
-urlFragment: azbulksetblobtier
+urlFragment: AzBulkSetBlobTags
 ---
 
-# AzBulkSetBlobTier
+# AzBulkSetBlobTags
 
 The goal of this sample application is to show an efficient way to queue all the objects in an Azure Storage Container for moving from/to any of the storage tiers Hot, Cool or Archive. 
 
@@ -167,7 +167,7 @@ az monitor app-insights component create --app $AI -g $RG -l $REGION
 # Package the sample into a docker container and publish it to ACR
 #   Here we are building with the published sample code from GitHub
 #   If you are changing the code alter this command to point to where you put your code
-az acr build -r $ACR https://github.com/Azure/AzBulkSetBlobTier.git -f AzBulkSetBlobTier/Dockerfile --image azbulksetblobtier:latest
+az acr build -r $ACR https://github.com/Azure/AzBulkSetBlobTags.git -f AzBulkSetBlobTags/Dockerfile --image AzBulkSetBlobTags:latest
 ```
 
 #### Run the sample
@@ -194,7 +194,7 @@ az container create \
     --registry-login-server $ACRSVR \
     --registry-username $ACRUSER \
     --registry-password $ACRPWD \
-    --image "$ACRSVR/azbulksetblobtier:latest" \
+    --image "$ACRSVR/AzBulkSetBlobTags:latest" \
     --restart-policy Never \
     --no-wait \
     --environment-variables \
@@ -234,7 +234,7 @@ for container in `az storage container list --connection-string $STORAGEACCTCS -
       --registry-login-server $ACRSVR \
       --registry-username $ACRUSER \
       --registry-password $ACRPWD \
-      --image "$ACRSVR/azbulksetblobtier:latest" \
+      --image "$ACRSVR/AzBulkSetBlobTags:latest" \
       --restart-policy Never \
       --no-wait \
       --environment-variables \

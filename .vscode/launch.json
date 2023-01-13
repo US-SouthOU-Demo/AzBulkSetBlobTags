@@ -10,9 +10,9 @@
             "request": "launch",
             "preLaunchTask": "build",
             // If you have changed target frameworks, make sure to update the program path.
-            "program": "${workspaceFolder}/AzBulkSetBlobTier/bin/Debug/net7.0/AzBulkSetBlobTier.dll",
+            "program": "${workspaceFolder}/AzBulkSetBlobTags/bin/Debug/net7.0/AzBulkSetBlobTags.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/AzBulkSetBlobTier",
+            "cwd": "${workspaceFolder}/AzBulkSetBlobTags",
             // For more information about the 'console' field, see https://aka.ms/VSCode-CS-LaunchJson-Console
             "console": "internalConsole",
             "stopAtEntry": false

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AzBulkSetBlobTier
+namespace AzBulkSetBlobTags
 {
     public class Config
     {
@@ -12,8 +12,6 @@ namespace AzBulkSetBlobTier
         public string Prefix { get; set; }
         public string StorageConnectionString { get; set; }
         public string Container { get; set; }
-        public string TargetAccessTier { get; set; }
-        public string SourceAccessTier { get; set; }
         public string Delimiter { get; set; }
         public int ThreadCount { get; set; }
         public bool WhatIf { get; set; }
