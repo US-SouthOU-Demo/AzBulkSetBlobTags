@@ -209,15 +209,13 @@ namespace AzBulkSetBlobTags
 
                             Dictionary<string, string> tags = new Dictionary<string, string>
                             {
-                                { "ContentType", item.Blob.Properties.ContentType  }                                
+                                { "ContentType", item.Blob.Properties.ContentType  },
+                                { "Extension", item.Blob.Name.Split('.').Last() }
+
                             };
 
-                            BlobClient blobClient = blobContainerClient.GetBlobClient(item.Blob.Name);
-                            GetBlobTagResult result = blobClient.GetTags();
-                            if(result.Tags.Count == 0) {
-                                Azure.Response response = blobClient.SetTags(tags);
-                                if(response.IsError) _logger.LogError(response.ReasonPhrase);
-                            }
+                            Azure.Response response = blobContainerClient.GetBlobClient(item.Blob.Name).SetTags(tags);
+                            if (response.IsError) _logger.LogError(response.ReasonPhrase);
                         }
 
                     }
