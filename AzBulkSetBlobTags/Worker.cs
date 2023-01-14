@@ -212,7 +212,12 @@ namespace AzBulkSetBlobTags
                                 { "ContentType", item.Blob.Properties.ContentType  }                                
                             };
 
-                            await blobContainerClient.GetBlobClient(item.Blob.Name).SetTagsAsync(tags);
+                            BlobClient blobClient = blobContainerClient.GetBlobClient(item.Blob.Name);
+                            GetBlobTagResult result = blobClient.GetTags();
+                            if(result.Tags.Count == 0) {
+                                Azure.Response response = blobClient.SetTags(tags);
+                                if(response.IsError) _logger.LogError(response.ReasonPhrase);
+                            }
                         }
 
                     }
