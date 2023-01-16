@@ -238,7 +238,7 @@ namespace AzBulkSetBlobTags
                                 tags["MD5"] = System.Convert.ToBase64String(item.Blob.Properties.ContentHash);
 
                             // Use ComputerVision to describe images, if we have been passed in the key to an existing service and it's endpoint (e.g. https://contoso.cognitiveservices.azure.com)
-                            if(item.Blob.Properties.AccessTier != AccessTier.Archive && item.Blob.Properties.ContentType == "image/jpeg" && !tags.ContainsKey("description") && !string.IsNullOrEmpty(_config.ComputerVisionKey) && !string.IsNullOrEmpty(_config.ComputerVisionEndpoint) {
+                            if(item.Blob.Properties.AccessTier != AccessTier.Archive && item.Blob.Properties.ContentType == "image/jpeg" && !tags.ContainsKey("description") && !string.IsNullOrEmpty(_config.ComputerVisionKey) && !string.IsNullOrEmpty(_config.ComputerVisionEndpoint)) {
 
                                 if(item.Blob.Properties.ContentLength > 4000000)
                                     // _logger.LogWarning(string.Format("Image '{0}' is size {1} bytes and therefore {2} bytes too big to analyze - skipping", item.Blob.Name, item.Blob.Properties.ContentLength, item.Blob.Properties.ContentLength - 4000000));
