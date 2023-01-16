@@ -1,11 +1,14 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
-using Azure.Storage.Blobs.Specialized;
+using Azure.Storage.Sas;
+using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
+using Microsoft.Azure.CognitiveServices.Vision.ComputerVision.Models;
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.DataContracts;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
+using System.IO;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,6 +17,7 @@ using System.Threading.Tasks;
 
 namespace AzBulkSetBlobTags
 {
+
     public class Worker : BackgroundService
     {
         private readonly ILogger<Worker> _logger;
@@ -23,8 +27,10 @@ namespace AzBulkSetBlobTags
         private readonly ConcurrentBag<Task> _todo;
         private readonly SemaphoreSlim _slim;
         private long _blobCount;
-        private long _blobBytes;
+        private long _imageTooBigToProcessCount;
+        private long _imageProcessedCount;
         private bool _configValid = true;
+        private string storedPolicyName = string.Empty;
 
 
         public Worker(ILogger<Worker> logger,
@@ -91,6 +97,11 @@ namespace AzBulkSetBlobTags
                     _configValid = false;
                 }
 
+                // Set the default endpoint for ComputerVision if one has not been set
+                if(string.IsNullOrEmpty(_config.ComputerVisionEndpoint)) {
+                    _config.ComputerVisionEndpoint = "https://cloudycomputervision.cognitiveservices.azure.com/";
+                }
+
             }
         }
 
@@ -149,7 +160,8 @@ namespace AzBulkSetBlobTags
                 LogStatus();
 
                 op.Telemetry.Metrics.Add("Blobs", _blobCount);
-                op.Telemetry.Metrics.Add("Bytes", _blobBytes);
+                op.Telemetry.Metrics.Add("Blobs Too Big To Process", _imageTooBigToProcessCount);
+                op.Telemetry.Metrics.Add("Images Processed", _imageProcessedCount);
             }
         }
 
@@ -158,7 +170,7 @@ namespace AzBulkSetBlobTags
         /// </summary>
         private void LogStatus()
         {
-            _logger.LogInformation($"Blobs Tagged: {_blobCount:N0} in {BytesToTiB(_blobBytes):N2} TiB");
+            _logger.LogInformation($"Blobs Tagged: {_blobCount:N0}; Images Processed: {_imageProcessedCount:N0}; images skipped processing: {_imageTooBigToProcessCount:N0}");
         }
 
         /// <summary>
@@ -191,9 +203,12 @@ namespace AzBulkSetBlobTags
                     op.Telemetry.Properties.Add("Prefix", prefix);
 
                     //Get a client to connect to the blob container
-                    var blobServiceClient = new BlobServiceClient(_config.StorageConnectionString);
+                    var blobServiceClient = new BlobServiceClient(_config.StorageConnectionString);                    
                     var blobContainerClient = blobServiceClient.GetBlobContainerClient(_config.Container);
-                    var uris = new Stack<Uri>();
+                    
+                    // Get a client to create Thumbnails with
+                    var webContainerClient = blobServiceClient.GetBlobContainerClient("$web");
+                    webContainerClient.CreateIfNotExists();
 
                     await foreach (var item in blobContainerClient.GetBlobsByHierarchyAsync(prefix: prefix, delimiter: _config.Delimiter, cancellationToken: stoppingToken))
                     {
@@ -202,20 +217,116 @@ namespace AzBulkSetBlobTags
                         {
                             ProcessFolder(item.Prefix, stoppingToken);
                         }
-                        //I found a block blob - set extension tag if NOT Archive
+                        //I found a block blob - set tags
                         else if (item.IsBlob && BlobType.Block.Equals(item.Blob.Properties.BlobType))
                         {
-                            InterlockedAdd(ref _blobCount, ref _blobBytes, item);
+                            Interlocked.Add(ref _blobCount, 1);
+                            IDictionary<string, string> tags = new Dictionary<string, string>();
 
-                            Dictionary<string, string> tags = new Dictionary<string, string>
-                            {
-                                { "ContentType", item.Blob.Properties.ContentType  },
-                                { "Extension", item.Blob.Name.Split('.').Last() }
+                            BlobClient blobClient = blobContainerClient.GetBlobClient(item.Blob.Name);
+                            
+                            // Get any tags previously set
+                            GetBlobTagResult getBlobTagResult = blobClient.GetTags();
+                            if (getBlobTagResult.Tags != null && getBlobTagResult.Tags.Count > 1)
+                                tags = getBlobTagResult.Tags;
 
-                            };
+                            // Set some tags. We get 10 key-value tags per Blob, up to 256 characters per tag value
+                            // https://learn.microsoft.com/en-us/azure/storage/blobs/storage-manage-find-blobs?tabs=azure-portal#setting-blob-index-tags
 
-                            Azure.Response response = blobContainerClient.GetBlobClient(item.Blob.Name).SetTags(tags);
+                            if(!tags.ContainsKey("ContentType"))
+                                tags["ContentType"] = item.Blob.Properties.ContentType;
+                            
+                            if(!tags.ContainsKey("Extension"))
+                                tags["Extension"] = item.Blob.Name.Split('.').Last().ToLower();
+                            else if(tags["Extension"] != item.Blob.Name.Split('.').Last().ToLower())
+                                tags["Extension"] = item.Blob.Name.Split('.').Last().ToLower();
+                            if(!tags.ContainsKey("MD5"))
+                                tags["MD5"] = System.Convert.ToBase64String(item.Blob.Properties.ContentHash);
+
+                            // Use ComputerVision to describe images
+                            if(item.Blob.Properties.AccessTier != AccessTier.Archive && item.Blob.Properties.ContentType == "image/jpeg" && !tags.ContainsKey("description") && !string.IsNullOrEmpty(_config.ComputerVisionKey)) {
+
+                                if(item.Blob.Properties.ContentLength > 4000000)
+                                    // _logger.LogWarning(string.Format("Image '{0}' is size {1} bytes and therefore {2} bytes too big to analyze - skipping", item.Blob.Name, item.Blob.Properties.ContentLength, item.Blob.Properties.ContentLength - 4000000));
+                                    Interlocked.Add(ref _imageTooBigToProcessCount, 1);
+                                else
+                                    try {
+
+                                        // Make a ComputerVisionClient
+                                        ComputerVisionClient client = new ComputerVisionClient(new ApiKeyServiceClientCredentials(_config.ComputerVisionKey)) { Endpoint = _config.ComputerVisionEndpoint };
+
+                                        // Make a SAS Url of this image for ComputerVision to use for the next hour
+                                        if (blobClient.CanGenerateSasUri)
+                                            {
+                                                // Create a SAS token that's valid for one hour.
+                                                BlobSasBuilder sasBuilder = new BlobSasBuilder()
+                                                {
+                                                    BlobContainerName = _config.Container,
+                                                    BlobName = blobClient.Name,
+                                                    Resource = "b"
+                                                };
+
+                                                sasBuilder.ExpiresOn = DateTimeOffset.UtcNow.AddHours(1);
+                                                sasBuilder.SetPermissions(BlobSasPermissions.Read);
+                                                Uri sasUri = blobClient.GenerateSasUri(sasBuilder);
+
+                                                // Creating a list that defines the features to be extracted from the image. 
+                                                List<VisualFeatureTypes?> features = new List<VisualFeatureTypes?>()
+                                                {
+                                                    VisualFeatureTypes.Tags,
+                                                    VisualFeatureTypes.Description,
+                                                    VisualFeatureTypes.Faces
+                                                };
+
+                                                ImageAnalysis result = await client.AnalyzeImageAsync(sasUri.ToString(), visualFeatures: features);
+
+                                                // Valid special characters: space, plus, minus, period, colon, equals, underscore, forward slash ( +-.:=_/)
+                                                string description = result.Description.Captions.FirstOrDefault().Text;
+                                                description = description.Replace("'", string.Empty).Replace(",", string.Empty);
+                                                if(description.Length > 256)
+                                                    description = description.Substring(0, 255);
+                                                tags["description"] = description;
+
+                                                string imageTags = string.Empty;
+                                                result.Tags.ToList().ForEach(a => imageTags += string.Format("{0}:",a.Name));
+                                                imageTags = imageTags.Trim(':');
+                                                if (imageTags.Length > 256)
+                                                    imageTags = imageTags.Substring(0, 255);
+                                                tags["tags"] = imageTags;
+
+                                                string faceRectangles = string.Empty;
+                                                if(result.Faces.Count() > 0) {
+                                                    result.Faces.ToList().ForEach(a => faceRectangles += string.Format("{0}:{1}:{2}:{3}/", a.FaceRectangle.Left, a.FaceRectangle.Top, a.FaceRectangle.Width, a.FaceRectangle.Height));
+                                                    faceRectangles = faceRectangles.Trim(';');
+                                                    if (faceRectangles.Length > 256)
+                                                        faceRectangles = faceRectangles.Substring(0, 255);
+                                                    tags["faceRectangles"] = faceRectangles;
+                                                }
+
+                                                tags["height"] = result.Metadata.Height.ToString();
+                                                tags["width"] = result.Metadata.Width.ToString();
+
+                                                if(_config.Container != "$web") {
+                                                    // Create a thumbnail of this image in the static website folder. Use the ContentHash as the filename to avoid duplicates
+                                                    string thumbFileName = string.Format("{0}.jpg", System.Web.HttpUtility.UrlEncode(item.Blob.Properties.ContentHash));
+                                                    var thumbnailClient = webContainerClient.GetBlobClient(thumbFileName);
+                                                    if (!thumbnailClient.Exists()) {
+                                                        var thumbnail = await client.GenerateThumbnailAsync(256, 256, sasUri.ToString(), true);
+                                                        await thumbnailClient.UploadAsync(thumbnail, new BlobUploadOptions() { HttpHeaders = new BlobHttpHeaders() { ContentType = tags["ContentType"] }, Tags = new Dictionary<string, string>() { { "description", tags["description"] } }, AccessTier = AccessTier.Hot });
+                                                    }
+                                                }
+
+                                                Interlocked.Add(ref _imageProcessedCount, 1);
+                                        }
+
+                                    } catch (Exception ex) {
+                                        _logger.LogError("Error Processing Blob '" + item.Blob.Name + "': " + ex.Message);
+                                    } 
+                            }
+
+                            Azure.Response response = blobClient.SetTags(tags);
                             if (response.IsError) _logger.LogError(response.ReasonPhrase);
+
                         }
 
                     }
@@ -228,16 +339,5 @@ namespace AzBulkSetBlobTags
 
         }
 
-        /// <summary>
-        /// increment the counter
-        /// </summary>
-        /// <param name="count">blob count counter</param>
-        /// <param name="bytes">blob bytes counter</param>
-        /// <param name="bhi">blob hierarchy item</param>
-        private void InterlockedAdd(ref long count, ref long bytes, BlobHierarchyItem bhi)
-        {
-            Interlocked.Add(ref count, 1);
-            Interlocked.Add(ref bytes, bhi.Blob.Properties.ContentLength.GetValueOrDefault());
-        }        
     }
 }
